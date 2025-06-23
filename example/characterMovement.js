@@ -22,8 +22,14 @@ const params = {
 
 };
 
+const PI_2 = 0.5 * Math.PI
+const PI_4 = 0.25 * Math.PI
+
 let renderer, camera, scene, clock, gui, stats;
 let environment, collider, visualizer, player, controls;
+let playerModel, standIndex, runIndex, jumpIndex;
+let playerActions = [];
+let mixers = [];
 let playerIsOnGround = false;
 let fwdPressed = false, bkdPressed = false, lftPressed = false, rgtPressed = false;
 let playerVelocity = new THREE.Vector3();
@@ -100,8 +106,25 @@ function init() {
 	player.castShadow = true;
 	player.receiveShadow = true;
 	player.material.shadowSide = 2;
+	player.visible = false;
 	scene.add( player );
-	reset();
+
+	new GLTFLoader().load('engineer.glb', gltf => {
+		console.log(gltf);
+		playerModel = gltf.scene.children[0]
+		playerModel.rotateX( - PI_2 )
+		let mixer = new THREE.AnimationMixer(playerModel)
+		gltf.animations.forEach(v => playerActions.push(mixer.clipAction(v)))
+		standIndex = playerActions.findIndex(v => v['_clip'].name == 'stand')
+		runIndex = playerActions.findIndex(v => v['_clip'].name == 'run')
+		jumpIndex = playerActions.findIndex(v => v['_clip'].name == 'jump')
+		
+		mixers.push(mixer)
+		scene.add( playerModel );
+		
+		reset();
+	})
+	// reset();
 
 	// dat.gui
 	gui = new GUI();
@@ -295,6 +318,7 @@ function reset() {
 
 	playerVelocity.set( 0, 0, 0 );
 	player.position.set( 15.75, - 3, 30 );
+	playerModel.position.set(15.75, - 4.5, 30); // -4.48
 	camera.position.sub( controls.target );
 	controls.target.copy( player.position );
 	camera.position.add( player.position );
@@ -316,36 +340,47 @@ function updatePlayer( delta ) {
 
 	player.position.addScaledVector( playerVelocity, delta );
 
+	let playerRotation = 0
+
 	// move the player
 	const angle = controls.getAzimuthalAngle();
 	if ( fwdPressed ) {
 
 		tempVector.set( 0, 0, - 1 ).applyAxisAngle( upVector, angle );
 		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
-
-	}
-
-	if ( bkdPressed ) {
-
-		tempVector.set( 0, 0, 1 ).applyAxisAngle( upVector, angle );
-		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
-
+		playerRotation += Math.PI
 	}
 
 	if ( lftPressed ) {
 
 		tempVector.set( - 1, 0, 0 ).applyAxisAngle( upVector, angle );
 		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
-
+		playerRotation ? playerRotation += PI_4 : playerRotation -= PI_2
 	}
 
 	if ( rgtPressed ) {
 
 		tempVector.set( 1, 0, 0 ).applyAxisAngle( upVector, angle );
 		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
-
+		playerRotation ? playerRotation -= PI_4 : playerRotation += PI_2
 	}
 
+	if ( bkdPressed ) {
+
+		tempVector.set( 0, 0, 1 ).applyAxisAngle( upVector, angle );
+		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
+		if (playerRotation) {
+			Math.abs(playerRotation) == PI_2 ? playerRotation /= 2 : playerRotation *= 2
+		}
+	}
+
+	if (playerRotation || bkdPressed) {
+		let eulerY = new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(camera.quaternion).y
+		playerModel.rotation.y = eulerY + playerRotation
+	}
+
+	chooseAction()
+	
 	player.updateMatrixWorld();
 
 	// adjust player position based on collisions
@@ -435,6 +470,19 @@ function updatePlayer( delta ) {
 
 }
 
+function chooseAction() {
+	if (playerIsOnGround) {
+		if (fwdPressed || bkdPressed || lftPressed || rgtPressed) {
+			playerActions.forEach((v, i) => i == runIndex ? v.play() : v.stop())
+		} else {
+			playerActions.forEach((v, i) => i == standIndex ? v.play() : v.stop())
+		}
+	} else {
+		if (-9 < playerVelocity.y && playerVelocity.y < 9) return
+		playerActions.forEach((v, i) => i == jumpIndex ? v.play() : v.stop())
+	}
+}
+
 function render() {
 
 	stats.update();
@@ -449,7 +497,7 @@ function render() {
 
 	} else {
 
-		controls.maxPolarAngle = Math.PI / 2;
+		controls.maxPolarAngle = PI_2;
 		controls.minDistance = 1;
 		controls.maxDistance = 20;
 
@@ -467,6 +515,9 @@ function render() {
 			updatePlayer( delta / physicsSteps );
 
 		}
+
+		playerModel.position.set(player.position.x, player.position.y - 1.5, player.position.z)
+		mixers.forEach(mixer => mixer.update(delta))
 
 	}
 
